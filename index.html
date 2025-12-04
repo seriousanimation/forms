@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Quad Cylinder & Static Lighting</title>
+    <title>Mobile Optimized 3D</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #222; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
         
@@ -48,13 +48,15 @@
 
         #loading {
             position: absolute; top: 40%; left: 50%; 
-            transform: translate(-50%, -50%); color: #888;
+            transform: translate(-50%, -50%); 
+            color: #888;
+            transition: opacity 0.5s;
         }
     </style>
 </head>
 <body>
 
-    <div id="loading">Loading Reflection Map...</div>
+    <div id="loading">Initializing 3D Engine...</div>
 
     <div id="ui-container">
         <div class="select-wrapper">
@@ -72,8 +74,7 @@
                 <option value="matte" selected>Matte (Plastic)</option>
                 <option value="reflective">Reflective (Chrome)</option>
                 <option value="wood">Wood Texture</option>
-                <option value="refractive">Refractive (Glass)</option>
-            </select>
+                </select>
         </div>
 
         <div class="select-wrapper">
@@ -103,10 +104,11 @@
 
         const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
         camera.position.set(0, 0, 7);
+        scene.add(camera); // REQUIRED for camera-attached lights
 
-        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
         renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Cap pixel ratio at 2 for performance
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
         document.body.appendChild(renderer.domElement);
 
@@ -114,43 +116,40 @@
         controls.enableDamping = true;
         controls.dampingFactor = 0.05;
 
-        // --- 2. LIGHTING (Attached to Camera for Static Screen Position) ---
+        // --- 2. STATIC LIGHTING (Attached to Camera) ---
         
-        // Light A: Top Left (Low Sat Orange)
-        // Hex #ffaa88 is a peachy/salmon orange (low saturation)
-        const lightTopLeft = new THREE.DirectionalLight(0xffaa88, 3.0); 
-        lightTopLeft.position.set(-5, 5, 2); // Left, Up, Front
+        // Light A: Top Left (Orange)
+        const lightTopLeft = new THREE.DirectionalLight(0xffaa88, 4.0); 
+        lightTopLeft.position.set(-5, 5, 2); 
         camera.add(lightTopLeft);
 
         // Light B: Bottom Right (Blue)
-        const lightBottomRight = new THREE.DirectionalLight(0x0044ff, 3.0);
-        lightBottomRight.position.set(5, -5, 2); // Right, Down, Front
+        const lightBottomRight = new THREE.DirectionalLight(0x0044ff, 4.0);
+        lightBottomRight.position.set(5, -5, 2); 
         camera.add(lightBottomRight);
 
-        // Add ambient light for general visibility
-        const ambient = new THREE.AmbientLight(0xffffff, 0.2);
+        // Ambient for base visibility
+        const ambient = new THREE.AmbientLight(0xffffff, 0.3);
         scene.add(ambient);
-
-        // IMPORTANT: Add camera to scene so the lights attached to it work
-        scene.add(camera);
 
         // --- 3. ASSETS ---
         
-        // Textures
+        // Wood Texture
         function createWoodTexture() {
             const canvas = document.createElement('canvas');
-            canvas.width = 512; canvas.height = 512;
+            canvas.width = 256; canvas.height = 256; // Reduced texture size for mobile memory
             const ctx = canvas.getContext('2d');
-            ctx.fillStyle = '#5c4033'; ctx.fillRect(0,0,512,512);
-            for(let i=0; i<80; i++) {
+            ctx.fillStyle = '#5c4033'; ctx.fillRect(0,0,256,256);
+            for(let i=0; i<40; i++) {
                 ctx.fillStyle = Math.random() > 0.5 ? '#8B4513' : '#a0522d';
-                ctx.fillRect(Math.random()*512, 0, Math.random()*8, 512);
+                ctx.fillRect(Math.random()*256, 0, Math.random()*8, 256);
             }
             const tex = new THREE.CanvasTexture(canvas);
             tex.colorSpace = THREE.SRGBColorSpace;
             return tex;
         }
 
+        // Plastic Pattern Texture
         function createPatternTexture() {
             const canvas = document.createElement('canvas');
             canvas.width = 512; canvas.height = 512;
@@ -167,57 +166,49 @@
             return tex;
         }
 
-        const rgbeLoader = new THREE.TextureLoader();
-        rgbeLoader.load('https://threejs.org/examples/textures/2294472375_24a3b8ef46_o.jpg', (texture) => {
-            texture.mapping = THREE.EquirectangularReflectionMapping;
-            scene.environment = texture;
-            document.getElementById('loading').style.display = 'none';
-        });
+        // Environment Map (Optimized Loading)
+        const textureLoader = new THREE.TextureLoader();
+        // Standard JPG is much faster to load than HDR on mobile
+        textureLoader.load('https://threejs.org/examples/textures/2294472375_24a3b8ef46_o.jpg', 
+            (texture) => {
+                texture.mapping = THREE.EquirectangularReflectionMapping;
+                scene.environment = texture;
+                const loading = document.getElementById('loading');
+                if(loading) loading.style.opacity = 0;
+            },
+            undefined, // onProgress
+            (err) => {
+                console.error("Texture failed, using lights only");
+                const loading = document.getElementById('loading');
+                if(loading) loading.style.display = 'none';
+            }
+        );
 
         // --- 4. GEOMETRY HELPERS ---
 
-        // Custom Helper to build a Cylinder Wireframe out of QUADS
+        // Custom Quad Cylinder
         function createQuadCylinderWireframe(radius, height, radialSegs, heightSegs) {
             const vertices = [];
             
-            // 1. Vertical Lines (The Walls)
+            // 1. Vertical Lines
             for (let i = 0; i < radialSegs; i++) {
                 const angle = (i / radialSegs) * Math.PI * 2;
                 const x = Math.sin(angle) * radius;
                 const z = Math.cos(angle) * radius;
-                // Line from bottom to top
                 vertices.push(x, -height/2, z);
                 vertices.push(x, height/2, z);
             }
 
-            // 2. Horizontal Rings (The Ribs)
-            // We include top and bottom caps in this loop
+            // 2. Horizontal Rings
             for (let j = 0; j <= heightSegs; j++) {
                 const y = -height/2 + (height * (j / heightSegs));
-                
-                // Draw a circle at this height
                 for (let i = 0; i < radialSegs; i++) {
                     const angle1 = (i / radialSegs) * Math.PI * 2;
                     const angle2 = ((i + 1) / radialSegs) * Math.PI * 2;
-                    
                     vertices.push(Math.sin(angle1) * radius, y, Math.cos(angle1) * radius);
                     vertices.push(Math.sin(angle2) * radius, y, Math.cos(angle2) * radius);
                 }
             }
-
-            // 3. Cap Spokes (Optional: connects center to edge to close the shape visually)
-            // For a pure "Quad" look on caps, we'd need a grid, but radial spokes are standard for cylinders
-            // Uncomment below if you want spokes on top/bottom
-            /*
-            [-height/2, height/2].forEach(y => {
-                for (let i = 0; i < radialSegs; i++) {
-                    const angle = (i / radialSegs) * Math.PI * 2;
-                    vertices.push(0, y, 0); // Center
-                    vertices.push(Math.sin(angle) * radius, y, Math.cos(angle) * radius); // Edge
-                }
-            });
-            */
-
             const geo = new THREE.BufferGeometry();
             geo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
             return geo;
@@ -225,7 +216,7 @@
 
         const geometries = {
             cube: new THREE.BoxGeometry(2, 2, 2),
-            cylinder: new THREE.CylinderGeometry(1, 1, 2.5, 32, 4), // 4 height segments
+            cylinder: new THREE.CylinderGeometry(1, 1, 2.5, 32, 4),
             sphere: new THREE.SphereGeometry(1.4, 32, 32),
             cone: new THREE.ConeGeometry(1.2, 2.5, 32, 4),
             torus: new THREE.TorusGeometry(1.1, 0.4, 32, 64)
@@ -233,14 +224,19 @@
 
         // --- 5. MATERIALS ---
         const materials = {
-            reflective: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.0, metalness: 1.0 }),
-            matte: new THREE.MeshStandardMaterial({ map: createPatternTexture(), roughness: 0.5, metalness: 0.1 }),
-            wood: new THREE.MeshStandardMaterial({ map: createWoodTexture(), roughness: 0.7 }),
-            refractive: new THREE.MeshPhysicalMaterial({ roughness: 0.0, transmission: 1.0, thickness: 1.0, ior: 1.5, color: 0xffffff }),
+            reflective: new THREE.MeshStandardMaterial({ 
+                color: 0xffffff, roughness: 0.05, metalness: 1.0 // 0.05 roughness is cheaper than 0.0 on some GPUs
+            }),
+            matte: new THREE.MeshStandardMaterial({ 
+                map: createPatternTexture(), roughness: 0.5, metalness: 0.1 
+            }),
+            wood: new THREE.MeshStandardMaterial({ 
+                map: createWoodTexture(), roughness: 0.7 
+            }),
             wireframeColor: new THREE.LineBasicMaterial({ color: 0xffffff })
         };
 
-        // --- 6. UPDATE LOGIC ---
+        // --- 6. LOGIC ---
         
         let currentMesh = null;
         let currentLine = null;
@@ -258,44 +254,32 @@
             const mode = wireSelect.value;
             const geometry = geometries[shapeKey];
 
-            // Render Solid
             if (mode === 'shaded') {
                 const material = materials[matKey];
                 currentMesh = new THREE.Mesh(geometry, material);
                 scene.add(currentMesh);
             } 
-            // Render Wireframe
             else {
                 let wireGeo;
-
                 if (shapeKey === 'cylinder') {
-                    // USE CUSTOM QUAD GENERATOR
-                    // matches geometry dimensions: radius 1, height 2.5, radial 32, heightSegs 4
                     wireGeo = createQuadCylinderWireframe(1, 2.5, 32, 4);
-                    currentLine = new THREE.LineSegments(wireGeo, materials.wireframeColor);
-                } 
-                else if (shapeKey === 'cube') {
+                } else if (shapeKey === 'cube') {
                     wireGeo = new THREE.EdgesGeometry(geometry); 
-                    currentLine = new THREE.LineSegments(wireGeo, materials.wireframeColor);
-                } 
-                else {
-                    // Fallback for sphere/torus/cone
+                } else {
                     wireGeo = new THREE.WireframeGeometry(geometry);
-                    currentLine = new THREE.LineSegments(wireGeo, materials.wireframeColor);
                 }
-
-                if(currentLine) scene.add(currentLine);
+                currentLine = new THREE.LineSegments(wireGeo, materials.wireframeColor);
+                scene.add(currentLine);
             }
         }
 
         updateScene();
 
-        // Listeners
         shapeSelect.addEventListener('change', updateScene);
         matSelect.addEventListener('change', updateScene);
         wireSelect.addEventListener('change', updateScene);
 
-        // --- 7. LOOP ---
+        // --- 7. ANIMATION ---
         function animate() {
             requestAnimationFrame(animate);
             controls.update();
